@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>品項編碼取號</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--ink:#17212b;--sub:#5d6b79;--line:#d5dce3;--accent:#0b4f8a;--accent-ink:#fff;--ok:#156b3a;--okbg:#e6f4ea;--bad:#a12622;--badbg:#fbe9e7}
+@media (prefers-color-scheme:dark){:root{--bg:#10161c;--card:#1a232c;--ink:#e8edf2;--sub:#9aa8b6;--line:#2c3945;--accent:#5aa7e6;--accent-ink:#0b1620;--ok:#7fd3a0;--okbg:#14301f;--bad:#f0a29c;--badbg:#3a1a18}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,"PingFang TC","Noto Sans TC",sans-serif}
+main{max-width:520px;margin:0 auto;padding:16px 16px 40px;display:flex;flex-direction:column;gap:14px}
+h1{font-size:20px;margin:6px 0 0}
+.sub{color:var(--sub);font-size:13px;margin:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:12px}
+label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--sub)}
+select,input{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;width:100%}
+select:focus,input:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button{font:inherit;font-weight:600;border:0;border-radius:8px;padding:12px;background:var(--accent);color:var(--accent-ink)}
+button[disabled]{opacity:.45}
+button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line);font-weight:500}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.next{font-variant-numeric:tabular-nums;font-size:13px;color:var(--sub)}
+.msg{border-radius:8px;padding:10px 12px;font-size:14px}
+.msg.ok{background:var(--okbg);color:var(--ok)}
+.msg.bad{background:var(--badbg);color:var(--bad)}
+.code{font:600 26px/1.3 ui-monospace,Menlo,monospace;letter-spacing:.5px;word-break:break-all;font-variant-numeric:tabular-nums}
+.hash{font:12px/1.5 ui-monospace,Menlo,monospace;word-break:break-all}
+ol{margin:0;padding-left:20px;font-size:14px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<div><h1>品項編碼取號</h1><p class="sub">登義內部工具。取號後仍要到 Ragic 主表與 ECOUNT 搜尋確認查無，再建檔。</p></div>
+<div id="state" class="msg" role="status">載入中…</div>
+
+<section id="form" class="card" hidden>
+ <label>類別<select id="cat"></select></label>
+ <label>組別<select id="grp"></select><span id="nx" class="next"></span></label>
+ <div class="row">
+  <label id="tailBox">末碼<select id="tail"></select></label>
+  <label id="specBox">規格碼<select id="spec"></select></label>
+ </div>
+ <label>建檔申請單號<input id="req" inputmode="text" autocomplete="off" placeholder="必填"></label>
+ <button id="go" disabled>取號</button>
+</section>
+
+<section id="done" class="card" hidden>
+ <p class="sub" id="doneGrp"></p>
+ <div class="code" id="code"></div>
+ <button id="copy" class="ghost">複製編碼</button>
+ <ol><li>到 Ragic 主表搜尋這個編碼，要查無。</li><li>到 ECOUNT 品項搜尋，要查無。產品再查 A1、SHOPLINE。</li><li>查無才建檔；有查到請回報，不要自己改號。</li></ol>
+ <button id="again">再取一個</button>
+</section>
+
+<section id="me" class="card" hidden>
+ <p class="sub">你的取號人識別碼（由 LINE 帳號算出的雜湊，只顯示給你本人）。第一次使用時，把下面整串貼到 Ragic「取號人白名單」的識別碼欄並設為啟用。</p>
+ <div class="hash" id="hash"></div>
+ <button id="copyHash" class="ghost">複製識別碼</button>
+</section>
+<button id="showMe" class="ghost" hidden>顯示我的取號人識別碼</button>
+</main>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+// 設定：這三個值都不是機密。頁面不含任何品項資料或金鑰。
+const CFG={liff:'LIFF_ID_PLACEHOLDER',api:'https://hqn8n.dengyi.link/webhook/item-codegen-1afok2x53hc79kk9h18soa',client:'item-codegen-web-1'};
+const $=id=>document.getElementById(id);
+const TAIL={'產品':[['1','1 常溫'],['2','2 冷藏']],'E-資產設備':[['0','0 一般'],['1','1 可維修'],['2','2 需定期校正保養']]};
+const TAIL_DEF=[['0','0 常溫無效期'],['1','1'],['2','2']];
+const SPEC=['','PC','PAK','G','KG','TKG'];
+const NEED_SPEC=c=>c==='A-原料'||c==='B-半成品';
+const NO_TAIL=c=>c==='商品貨號';
+let idt='',groups=[],busy=false;
+
+function say(text,kind){const s=$('state');s.textContent=text;s.className='msg'+(kind?' '+kind:'');s.hidden=!text}
+async function call(path,body){
+ const r=await fetch(CFG.api+'/'+path,{method:'POST',headers:{'Content-Type':'application/json','X-DIC-Client':CFG.client},body:JSON.stringify(Object.assign({idt},body||{}))});
+ let j=null;try{j=await r.json()}catch(e){}
+ if(r.status===401||r.status===403){const e=new Error('沒有取號權限，或登入已過期。請關閉後重新開啟。');e.auth=true;throw e}
+ if(!r.ok||!j||!j.ok)throw new Error((j&&j.msg)||'系統忙碌或連線失敗（'+r.status+'）。沒有取到號，可以再試一次。');
+ return j}
+function rid(key){ // 同一組參數重送時沿用同一個請求編號，後端據此不重複取號
+ let m={};try{m=JSON.parse(sessionStorage.getItem('rid')||'{}')}catch(e){}
+ if(!m[key]){m={};m[key]=crypto.randomUUID();try{sessionStorage.setItem('rid',JSON.stringify(m))}catch(e){}}
+ return m[key]}
+function clearRid(){try{sessionStorage.removeItem('rid')}catch(e){}}
+function opt(sel,list){sel.innerHTML='';list.forEach(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;sel.appendChild(o)})}
+function drawCat(){const cats=[...new Set(groups.map(g=>g.cat))];opt($('cat'),cats.map(c=>[c,c]));drawGrp()}
+function drawGrp(){const c=$('cat').value;opt($('grp'),groups.filter(g=>g.cat===c).map(g=>[g.group,g.group+(g.name?'　'+g.name:'')]));
+ opt($('tail'),TAIL[c]||TAIL_DEF);$('tailBox').hidden=NO_TAIL(c);
+ opt($('spec'),SPEC.filter(s=>s||!NEED_SPEC(c)).map(s=>[s,s||'不加']));$('specBox').hidden=c==='產品'||NO_TAIL(c);drawNext()}
+function drawNext(){const g=groups.find(x=>x.group===$('grp').value);$('nx').textContent=g?'下一號流水：'+g.next:'';check()}
+function check(){$('go').disabled=busy||!$('grp').value||!$('req').value.trim()}
+async function take(){
+ if(busy)return;busy=true;check();say('取號中…');
+ const c=$('cat').value,p={group:$('grp').value,tail:NO_TAIL(c)?'':$('tail').value,spec:(c==='產品'||NO_TAIL(c))?'':$('spec').value,form:$('req').value.trim()};
+ try{const j=await call('take',Object.assign({rid:rid(JSON.stringify(p))},p));
+  clearRid();$('code').textContent=j.code;$('doneGrp').textContent='組別 '+j.group+'｜申請單 '+p.form;
+  $('form').hidden=true;$('done').hidden=false;say('已取號並寫回水位表。','ok')}
+ catch(e){say(e.message,'bad')}
+ busy=false;check()}
+async function load(){say('讀取組別…');try{const j=await call('groups');groups=j.groups||[];drawCat();$('form').hidden=false;$('done').hidden=true;$('showMe').hidden=true;$('me').hidden=true;say('')}catch(e){say(e.message,'bad');if(e.auth)$('showMe').hidden=false}}
+async function myHash(){const sub=(liff.getDecodedIDToken()||{}).sub||'';const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(sub));
+ $('hash').textContent=[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');$('me').hidden=false}
+function copyText(t,btn){navigator.clipboard.writeText(t).then(()=>{const o=btn.textContent;btn.textContent='已複製';setTimeout(()=>btn.textContent=o,1500)}).catch(()=>say('無法自動複製，請長按選取。','bad'))}
+
+$('cat').addEventListener('change',drawGrp);$('grp').addEventListener('change',drawNext);$('req').addEventListener('input',check);
+$('go').addEventListener('click',take);$('again').addEventListener('click',load);
+$('copy').addEventListener('click',()=>copyText($('code').textContent,$('copy')));
+$('copyHash').addEventListener('click',()=>copyText($('hash').textContent,$('copyHash')));
+$('showMe').addEventListener('click',myHash);
+
+(async()=>{try{
+ await liff.init({liffId:CFG.liff});
+ if(!liff.isLoggedIn()){liff.login();return}
+ idt=liff.getIDToken()||'';
+ if(!idt){say('取不到登入憑證，請從 LINE 重新開啟。','bad');return}
+ load();
+}catch(e){say('LINE 登入初始化失敗，請從 LINE 重新開啟。','bad')}})();
+</script>
+</body>
+</html>
