@@ -77,7 +77,8 @@ let idt='',groups=[],busy=false;
 
 function say(text,kind){const s=$('state');s.textContent=text;s.className='msg'+(kind?' '+kind:'');s.hidden=!text}
 async function call(path,body){
- const r=await fetch(CFG.api+'/'+path,{method:'POST',headers:{'Content-Type':'application/json','X-DIC-Client':CFG.client},body:JSON.stringify(Object.assign({idt},body||{}))});
+ let r;try{r=await fetch(CFG.api+'/'+path,{method:'POST',headers:{'Content-Type':'application/json','X-DIC-Client':CFG.client},body:JSON.stringify(Object.assign({idt},body||{}))})}
+ catch(e){throw new Error('連不到取號系統。沒有取到號，請稍後再試；持續發生請回報。')}
  let j=null;try{j=await r.json()}catch(e){}
  if(r.status===401||r.status===403){const e=new Error('沒有取號權限，或登入已過期。請關閉後重新開啟。');e.auth=true;throw e}
  if(!r.ok||!j||!j.ok)throw new Error((j&&j.msg)||'系統忙碌或連線失敗（'+r.status+'）。沒有取到號，可以再試一次。');
@@ -92,7 +93,7 @@ function drawCat(){const cats=[...new Set(groups.map(g=>g.cat))];opt($('cat'),ca
 function drawGrp(){const c=$('cat').value;opt($('grp'),groups.filter(g=>g.cat===c).map(g=>[g.group,g.group+(g.name?'　'+g.name:'')]));
  opt($('tail'),TAIL[c]||TAIL_DEF);$('tailBox').hidden=NO_TAIL(c);
  opt($('spec'),SPEC.filter(s=>s||!NEED_SPEC(c)).map(s=>[s,s||'不加']));$('specBox').hidden=c==='產品'||NO_TAIL(c);drawNext()}
-function drawNext(){const g=groups.find(x=>x.group===$('grp').value);$('nx').textContent=g?'下一號流水：'+g.next:'';check()}
+function drawNext(){const g=groups.find(x=>x.group===$('grp').value);$('nx').textContent='';check()}
 function check(){$('go').disabled=busy||!$('grp').value||!$('req').value.trim()}
 async function take(){
  if(busy)return;busy=true;check();say('取號中…');
