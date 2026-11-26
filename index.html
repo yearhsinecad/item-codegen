@@ -77,7 +77,7 @@ let idt='',groups=[],busy=false;
 
 function say(text,kind){const s=$('state');s.textContent=text;s.className='msg'+(kind?' '+kind:'');s.hidden=!text}
 async function call(path,body){
- let r;try{r=await fetch(CFG.api+'/'+path,{method:'POST',headers:{'Content-Type':'application/json','X-DIC-Client':CFG.client},body:JSON.stringify(Object.assign({idt},body||{}))})}
+ let r;try{r=await fetch(CFG.api+'/'+path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'p='+encodeURIComponent(JSON.stringify(Object.assign({client:CFG.client,idt},body||{})))})}
  catch(e){throw new Error('連不到取號系統。沒有取到號，請稍後再試；持續發生請回報。')}
  let j=null;try{j=await r.json()}catch(e){}
  if(r.status===401||r.status===403){const e=new Error('沒有取號權限，或登入已過期。請關閉後重新開啟。');e.auth=true;throw e}
